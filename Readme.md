@@ -14,4 +14,4 @@ Some zip archives takes too much storage space for they store high quality `jpg`
 
 ## `LargeZipArchives.py`
 
-This script is used together with `ResizeAndCompressZip.py` to help you find the large zip archives that need to be processed. The averaged image size of the zip archive is calculated and the archives with size larger than the threshold (per image, default is 10MB) will be listed.  
+This script is used together with `ResizeAndCompressZip.py` to help you find the large zip archives that need to be processed. The averaged image size of the zip archive is calculated and the archives with size larger than the threshold (per image, 5MB by default) will be listed.  
