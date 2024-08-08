@@ -1,0 +1,226 @@
+from PIL import Image
+import os
+from datetime import datetime
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+import shutil
+
+exts = ('.jpg', '.jpeg', '.png')
+
+# ANSI escape codes for colors and styles
+
+
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+def resize_and_compress_image(input_image_path, output_image_path, short_side=2400, quality=90):
+    with Image.open(input_image_path) as img:
+        # 获取原始尺寸
+        width, height = img.size
+
+        # 检查是否需要调整尺寸
+        if min(width, height) < short_side:
+            # 如果短边小于目标尺寸，则不需要调整尺寸
+            new_width, new_height = width, height
+        else:
+            # 根据短边确定新的宽度和高度
+            if width > height:
+                new_width = int((short_side / height) * width)
+                new_height = short_side
+            else:
+                new_height = int((short_side / width) * height)
+                new_width = short_side
+
+        # 如果需要调整尺寸则调整
+        if (width, height) != (new_width, new_height):
+            resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+        else:
+            resized_img = img
+
+        # 将图像保存为WebP格式
+        resized_img.save(output_image_path, "WEBP", quality=quality,
+                         optimize=True, method=6)
+        # # if the image is GIF, pass more args to save as animated webp
+        # if img.format == 'GIF':
+        #     resized_img.save(output_image_path, "WEBP", quality=quality,
+        #                      save_all=True, method=6)
+        # else:
+        #     resized_img.save(output_image_path, "WEBP", quality=quality,
+        #                  optimize=True, method=6)
+
+        # 保留源文件的修改日期
+        mtime = os.path.getmtime(input_image_path)
+        os.utime(output_image_path, (mtime, mtime))
+
+
+def process_image(file, temp_dir):
+    if file.lower().endswith(exts):
+        # 生成新的文件名
+        new_file = os.path.join(temp_dir, os.path.splitext(file)[0] + ".webp")
+        # print(f"Processing {file} to {new_file}")
+
+        # 压缩并调整大小
+        resize_and_compress_image(os.path.join(
+            temp_dir, file), new_file, short_side=SHORT_SIDE)
+
+        return new_file, file
+
+    return None, file
+
+
+def extract_zip_files(zip_file_path, temp_dir):
+    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+        # 遍历ZIP文件中的所有成员
+        for member in zip_ref.infolist():
+            # 提取文件到指定目录
+            zip_ref.extract(member, temp_dir)
+
+            # 获取ZIP文件中文件的原始修改时间
+            mod_time = member.date_time  # UTC时间
+
+            # 将时间元组转换为datetime对象
+            mod_time = datetime(*mod_time)
+
+            # 设置输出文件的修改时间为ZIP文件中的时间
+            extracted_path = os.path.join(temp_dir, member.filename)
+            os.utime(extracted_path, (mod_time.timestamp(), mod_time.timestamp()))
+
+
+def delete_temp_dir(temp_dir):
+    try:
+        # 检查临时文件夹是否存在
+        if os.path.exists(temp_dir):
+            # 删除临时文件夹及其内容
+            shutil.rmtree(temp_dir)
+            print(
+                f"{Colors.OKBLUE}Temporary directory '{temp_dir}' has been deleted.{Colors.ENDC}")
+    except Exception as e:
+        print(
+            f"{Colors.FAIL}Failed to delete temporary directory '{temp_dir}': {e}{Colors.ENDC}")
+
+
+def compress_images_in_zip(zip_file_path, output_zip_path, temp_dir, max_workers=8):
+
+    # 解压ZIP文件到临时目录
+    extract_zip_files(zip_file_path, temp_dir)
+
+    # 获取所有文件的列表
+    files = []
+    for root, _, filenames in os.walk(temp_dir):
+        for filename in filenames:
+            files.append(os.path.join(root, filename))
+
+    # 使用多线程处理图像
+    processed_files = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交任务给线程池
+        futures = [executor.submit(process_image, file, temp_dir)
+                   for file in files if file.lower().endswith(exts)]
+
+        # 创建一个进度条
+        progress_bar = tqdm(total=len(futures),
+                            desc="  Processing Images", unit="image")
+
+        # 收集结果
+        for future in futures:
+            new_file, original_file = future.result()
+            if new_file:
+                processed_files.append((new_file, original_file))
+                progress_bar.update(1)  # 更新进度条
+
+        progress_bar.close()  # 关闭进度条
+
+    # 创建一个新的ZIP文件来存储压缩后的图像
+    try:
+        # check if the output zip file already exists, if so, ask for overwrite
+        if os.path.exists(output_zip_path):
+            print(
+                f"{Colors.WARNING}The output ZIP file '{output_zip_path}' already exists.{Colors.ENDC}")
+            overwrite = input("Do you want to overwrite it? (y/n): ")
+            if overwrite.lower() != 'y':
+                print(
+                    f"{Colors.FAIL}The output ZIP file has not been overwritten.{Colors.ENDC}")
+                return
+            else:
+                print(
+                    f"{Colors.WARNING}The output ZIP file will be overwritten.{Colors.ENDC}")
+                os.remove(output_zip_path)
+
+        with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+            # 处理压缩后的图片
+            for new_file, original_file in processed_files:
+                new_zip.write(
+                    new_file, arcname=os.path.relpath(new_file, temp_dir))
+                os.remove(new_file)
+
+            # 处理非图片文件
+            for file in files:
+                if not any(file.endswith(ext) for ext in exts):
+                    new_zip.write(
+                        file, arcname=os.path.relpath(file, temp_dir))
+    except Exception as e:
+        print(f"{Colors.FAIL}Failed to create ZIP file{Colors.ENDC}")
+
+    # 清理临时目录
+    for file in files:
+        os.remove(os.path.join(temp_dir, file))
+
+
+def process_zip_files(input_zip_dir, output_zip_dir, max_workers=8):
+    # 获取输入目录下的所有ZIP文件
+    zip_files = [f for f in os.listdir(input_zip_dir) if f.endswith('.zip')]
+
+    # 临时目录
+    temp_dir = os.path.join(output_zip_dir, 'tmp')
+
+    for zip_file in zip_files:
+        print(f"{Colors.HEADER}{Colors.BOLD}Processing: {zip_file}{Colors.ENDC}")
+
+        input_zip_path = os.path.join(input_zip_dir, zip_file)
+        # the name of output zip is "filename + (SHORT_SIDEx).zip"
+        output_zip_path = os.path.join(output_zip_dir,
+                                       os.path.splitext(zip_file)[0]
+                                       + f" ({SHORT_SIDE}x).zip")
+
+        original_zip_size = os.path.getsize(input_zip_path)
+
+        # 创建输出目录
+        os.makedirs(output_zip_dir, exist_ok=True)
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # 压缩图片并创建新的ZIP文件
+        compress_images_in_zip(
+            input_zip_path, output_zip_path, temp_dir, max_workers=max_workers)
+
+        # 计算压缩后ZIP文件的大小
+        compressed_zip_size = os.path.getsize(output_zip_path)
+
+        # 计算压缩率
+        compression_rate = compressed_zip_size / \
+            original_zip_size * 100 if original_zip_size > 0 else 0
+
+        print(
+            f"  {Colors.OKCYAN}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+
+    delete_temp_dir(temp_dir)
+
+
+# 指定输入和输出ZIP文件的路径
+input_zip_dir = os.path.join(os.getcwd(), "input")
+output_zip_dir = os.path.join(os.getcwd(), "output")
+
+# 重设图片短边尺寸
+SHORT_SIDE = 2400  # px
+
+# 调用函数
+process_zip_files(input_zip_dir, output_zip_dir, max_workers=8)
