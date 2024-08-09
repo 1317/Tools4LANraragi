@@ -12,6 +12,11 @@ Some how I cannot just do a backup of the LANraragi database via the webpage. So
 
 Some zip archives takes too much storage space for they store high quality `jpg` / `png` images. But it's way too much for mobile reading. This script can be used to resize the images (to 2400px, by default) and compress the images in the novel image format `WebP` without sacrificing too much quality, which is expected to save up to 90% space. **(Make sure you have a backup of the original zip archive before excuting!!)**
 
+Supported process:
+- Resize and compress static images(`jpg`, `png`, etc.) to `WebP` format.
+- Compress animated images(`gif`) to `WebP` format.
+- Convert short videos(`mp4`, etc.) to `WebP` format (so you can watch them directly in the reader).
+
 ## `LargeZipArchives.py`
 
 This script is used together with `ResizeAndCompressZip.py` to help you find the large zip archives that need to be processed. The averaged image size of the zip archive is calculated and the archives with size larger than the threshold (per image, 5MB by default) will be listed.  
