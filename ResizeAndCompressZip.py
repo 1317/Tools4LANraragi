@@ -5,8 +5,15 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import shutil
+import subprocess
 
-exts = ('.jpg', '.jpeg', '.png')
+img_exts = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif')
+video_exts = ('.mp4', '.mov')
+exts = img_exts + video_exts
+
+# process presets
+presets = {"image": {"quality": 80, "short_side": 1280, "gif_quality": 80, "gif_method": 4},
+           "video": {"fps": 15, "size": "640:360"}}
 
 # ANSI escape codes for colors and styles
 
@@ -23,7 +30,23 @@ class Colors:
     UNDERLINE = '\033[4m'
 
 
-def resize_and_compress_image(input_image_path, output_image_path, short_side=2400, quality=90):
+def convert_video_to_webp(input_video_path, output_image_path, fps=15, size="854:480"):
+    # 使用ffmpeg将视频转换为WebP格式
+    # command:  ffmpeg -i .\input.mp4 -vcodec libwebp -loop 0 -preset default -lossless 1 -filter:v fps=fps=15  -s 854:480  output.webp -y
+    r = subprocess.run(["ffmpeg", "-i", input_video_path, "-vcodec", "libwebp", "-loop", "0", "-preset", "default", "-lossless", "0",
+                       "-filter:v", f"fps=fps={fps}", "-s", size, output_image_path, "-y"], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    if r.returncode != 0:
+        print(
+            f"{Colors.FAIL}Failed to convert video to WebP: {r.stderr.decode('utf-8')}{Colors.ENDC}")
+        return
+
+    # 保留源文件的修改日期
+    mtime = os.path.getmtime(input_video_path)
+    os.utime(output_image_path, (mtime, mtime))
+
+
+def resize_and_compress_image(input_image_path, output_image_path, method=6, short_side=2400, quality=80, gif_quality=80, gif_method=4):
     with Image.open(input_image_path) as img:
         # 获取原始尺寸
         width, height = img.size
@@ -48,30 +71,42 @@ def resize_and_compress_image(input_image_path, output_image_path, short_side=24
             resized_img = img
 
         # 将图像保存为WebP格式
-        resized_img.save(output_image_path, "WEBP", quality=quality,
-                         optimize=True, method=6)
-        # # if the image is GIF, pass more args to save as animated webp
-        # if img.format == 'GIF':
-        #     resized_img.save(output_image_path, "WEBP", quality=quality,
-        #                      save_all=True, method=6)
-        # else:
-        #     resized_img.save(output_image_path, "WEBP", quality=quality,
+        # resized_img.save(output_image_path, "WEBP", quality=quality,
         #                  optimize=True, method=6)
+        # if the image is GIF, pass more args to save as animated webp
+        if img.format == 'GIF':
+            resized_img.save(output_image_path, "WEBP", quality=gif_quality,
+                             save_all=True, method=gif_method, allow_mixed=True)
+        else:
+            resized_img.save(output_image_path, "WEBP", quality=quality,
+                             optimize=True, method=method)
 
         # 保留源文件的修改日期
         mtime = os.path.getmtime(input_image_path)
         os.utime(output_image_path, (mtime, mtime))
 
 
-def process_image(file, temp_dir):
+def process_media(file, temp_dir):
     if file.lower().endswith(exts):
         # 生成新的文件名
         new_file = os.path.join(temp_dir, os.path.splitext(file)[0] + ".webp")
         # print(f"Processing {file} to {new_file}")
 
-        # 压缩并调整大小
-        resize_and_compress_image(os.path.join(
-            temp_dir, file), new_file, short_side=SHORT_SIDE)
+        if file.lower().endswith(video_exts):
+            # 如果是视频文件则转换为WebP格式
+            convert_video_to_webp(
+                os.path.join(temp_dir, file),
+                new_file,
+                fps=presets["video"]["fps"],
+                size=presets["video"]["size"])
+            return new_file, file
+        elif file.lower().endswith(img_exts):
+            # 压缩并调整图片大小
+            resize_and_compress_image(
+                os.path.join(temp_dir, file),
+                new_file,
+                short_side=presets["image"]["short_side"],
+                quality=presets["image"]["quality"])
 
         return new_file, file
 
@@ -124,7 +159,7 @@ def compress_images_in_zip(zip_file_path, output_zip_path, temp_dir, max_workers
     processed_files = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交任务给线程池
-        futures = [executor.submit(process_image, file, temp_dir)
+        futures = [executor.submit(process_media, file, temp_dir)
                    for file in files if file.lower().endswith(exts)]
 
         # 创建一个进度条
@@ -190,7 +225,7 @@ def process_zip_files(input_zip_dir, output_zip_dir, max_workers=8):
         # the name of output zip is "filename + (SHORT_SIDEx).zip"
         output_zip_path = os.path.join(output_zip_dir,
                                        os.path.splitext(zip_file)[0]
-                                       + f" ({SHORT_SIDE}x).zip")
+                                       + f" ({presets['image']['short_side']}x).zip")
 
         original_zip_size = os.path.getsize(input_zip_path)
 
@@ -219,8 +254,6 @@ def process_zip_files(input_zip_dir, output_zip_dir, max_workers=8):
 input_zip_dir = os.path.join(os.getcwd(), "input")
 output_zip_dir = os.path.join(os.getcwd(), "output")
 
-# 重设图片短边尺寸
-SHORT_SIDE = 2400  # px
 
 # 调用函数
 process_zip_files(input_zip_dir, output_zip_dir, max_workers=8)
