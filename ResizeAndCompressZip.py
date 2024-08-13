@@ -6,14 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import shutil
 import subprocess
+import argparse
 
 img_exts = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif')
 video_exts = ('.mp4', '.mov')
 exts = img_exts + video_exts
-
-# process presets
-presets = {"image": {"quality": 80, "short_side": 1280, "gif_quality": 80, "gif_method": 4},
-           "video": {"fps": 15, "size": "640:360"}}
 
 # ANSI escape codes for colors and styles
 
@@ -105,8 +102,12 @@ def process_media(file, temp_dir):
             resize_and_compress_image(
                 os.path.join(temp_dir, file),
                 new_file,
+                quality=presets["image"]["quality"],
+                method=presets["image"]["method"],
                 short_side=presets["image"]["short_side"],
-                quality=presets["image"]["quality"])
+                gif_quality=presets["image"]["gif_quality"],
+                gif_method=presets["image"]["gif_method"]
+            )
 
         return new_file, file
 
@@ -250,10 +251,50 @@ def process_zip_files(input_zip_dir, output_zip_dir, max_workers=8):
     delete_temp_dir(temp_dir)
 
 
-# 指定输入和输出ZIP文件的路径
-input_zip_dir = os.path.join(os.getcwd(), "input")
-output_zip_dir = os.path.join(os.getcwd(), "output")
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Process and compress images in ZIP files.')
+    parser.add_argument('-i', '--input-dir', type=str, default=os.path.join(os.getcwd(), "input"),
+                        help='The directory containing the input ZIP files (default: ./input).')
+    parser.add_argument('-o', '--output-dir', type=str, default=os.path.join(os.getcwd(), "output"),
+                        help='The directory where the output ZIP files will be saved (default: ./output).')
 
+    parser.add_argument('-q', '--quality', type=int, default=80, metavar='IMAGE_QUALITY',
+                        help='The quality of the compressed images (default: 80).')
+    parser.add_argument('-m', '--method', type=int, default=6, metavar='IMAGE_METHOD',
+                        help='The compression method for images (default: 6).')
+    parser.add_argument('-s', '--short-side', type=int, default=2400,
+                        help='The length of the shorter side of the image (px) (default: 2400).')
 
-# 调用函数
-process_zip_files(input_zip_dir, output_zip_dir, max_workers=8)
+    parser.add_argument('-Q', '--gif-quality', type=int, default=80,
+                        help='The quality of the compressed GIF images (default: 80).')
+    parser.add_argument('-M', '--gif-method', type=int, default=4,
+                        help='The compression method for GIF images (default: 4).')
+
+    parser.add_argument('-f', '--fps', type=int, default=15,
+                        help='The frame rate of the output WebP video (default: 15).')
+    parser.add_argument('-v', '--video-size', type=str, default='640:360',
+                        help='The size of the output WebP video (default: 640:360).')
+
+    parser.add_argument('-w', '--max-workers', type=int, default=8,
+                        help='The maximum number of workers to use (default: 8).')
+
+    args = parser.parse_args()
+
+    # print the arguments
+    print(f"Input directory: {args.input_dir}")
+    print(f"Output directory: {args.output_dir}")
+    print(
+        f"[Images] Quality: {args.quality}, Method: {args.method}, Short Side: {args.short_side}x")
+    print(f"[GIFs]   Quality: {args.gif_quality}, Method: {args.gif_method}")
+    print(f"[Video]  FPS: {args.fps}, Size: {args.video_size}")
+    print(f"Max Workers: {args.max_workers}\n")
+
+    presets = {
+        "image": {"quality": args.quality, "method": args.method, "short_side": args.short_side,
+                  "gif_quality": args.gif_quality, "gif_method": args.gif_method},
+        "video": {"fps": args.fps, "size": args.video_size}
+    }
+
+    process_zip_files(args.input_dir,
+                      args.output_dir, args.max_workers)
