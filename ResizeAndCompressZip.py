@@ -93,7 +93,9 @@ def resize_and_compress_image(input_image_path, output_image_path, method=6, sho
 def process_media(file, temp_dir):
     if file.lower().endswith(exts):
         # 生成新的文件名
-        new_file = os.path.join(temp_dir, os.path.splitext(file)[0] + ".webp")
+        filename = os.path.basename(file)
+        new_file = os.path.join(
+            temp_dir, os.path.splitext(filename)[0] + ".webp")
         # print(f"Processing {file} to {new_file}")
 
         if file.lower().endswith(video_exts):
@@ -153,9 +155,6 @@ def delete_temp_dir(temp_dir):
 
 
 def compress_images_in_zip(zip_file_path, output_zip_path, temp_dir, max_workers=8):
-
-    # 解压ZIP文件到临时目录
-    extract_zip_files(zip_file_path, temp_dir)
 
     # 获取所有文件的列表
     files = []
@@ -219,41 +218,142 @@ def compress_images_in_zip(zip_file_path, output_zip_path, temp_dir, max_workers
         os.remove(os.path.join(temp_dir, file))
 
 
-def process_zip_files(input_zip_dir, output_zip_dir, max_workers=8):
-    # 获取输入目录下的所有ZIP文件
-    zip_files = [f for f in os.listdir(input_zip_dir) if f.endswith('.zip')]
+def compress_images_in_folder(input_file_path, output_zip_path, temp_dir, max_workers=8):
 
-    # 临时目录
-    temp_dir = os.path.join(output_zip_dir, 'tmp')
+    # 获取所有文件的列表
+    files = []
+    for root, _, filenames in os.walk(input_file_path):
+        for filename in filenames:
+            files.append(os.path.join(root, filename))
 
-    for zip_file in zip_files:
-        print(f"{Colors.HEADER}{Colors.BOLD}Processing: {zip_file}{Colors.ENDC}")
+    # 使用多线程处理图像
+    processed_files = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交任务给线程池
+        futures = [executor.submit(process_media, file, temp_dir)
+                   for file in files if file.lower().endswith(exts)]
 
-        input_zip_path = os.path.join(input_zip_dir, zip_file)
-        # the name of output zip is "filename + (SHORT_SIDEx).zip"
+        # 创建一个进度条
+        progress_bar = tqdm(total=len(futures),
+                            desc="  Processing Images", unit="image")
+
+        # 收集结果
+        for future in futures:
+            new_file, original_file = future.result()
+            if new_file:
+                processed_files.append((new_file, original_file))
+                progress_bar.update(1)  # 更新进度条
+
+        progress_bar.close()  # 关闭进度条
+
+    # 创建一个新的ZIP文件来存储压缩后的图像
+    try:
+        # check if the output zip file already exists, if so, ask for overwrite
+        if os.path.exists(output_zip_path):
+            print(
+                f"{Colors.WARNING}The output ZIP file '{output_zip_path}' already exists.{Colors.ENDC}")
+            overwrite = input("Do you want to overwrite it? (y/n): ")
+            if overwrite.lower() != 'y':
+                print(
+                    f"{Colors.FAIL}The output ZIP file has not been overwritten.{Colors.ENDC}")
+                return
+            else:
+                print(
+                    f"{Colors.WARNING}The output ZIP file will be overwritten.{Colors.ENDC}")
+                os.remove(output_zip_path)
+
+        with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as new_zip:
+            # 处理压缩后的图片
+            for new_file, original_file in processed_files:
+                new_zip.write(
+                    new_file, arcname=os.path.relpath(new_file, temp_dir))
+                os.remove(new_file)
+
+            # 处理非图片文件
+            for file in files:
+                if not any(file.endswith(ext) for ext in exts):
+                    new_zip.write(
+                        file, arcname=os.path.relpath(file, temp_dir))
+    except Exception as e:
+        print(f"{Colors.FAIL}Failed to create ZIP file{Colors.ENDC}")
+
+    # # 清理临时目录
+    # for file in files:
+    #     os.remove(os.path.join(temp_dir, file))
+
+
+def process_zip_files(input_dir, output_zip_dir, folder_mode=False, max_workers=8):
+
+    if not folder_mode:
+        # 获取输入目录下的所有ZIP文件
+        zip_files = [f for f in os.listdir(input_dir) if f.endswith('.zip')]
+
+        # 临时目录
+        temp_dir = os.path.join(output_zip_dir, 'tmp')
+
+        for zip_file in zip_files:
+            print(f"{Colors.HEADER}{Colors.BOLD}Processing: {zip_file}{Colors.ENDC}")
+
+            input_zip_path = os.path.join(input_dir, zip_file)
+            # the name of output zip is "filename + (SHORT_SIDEx).zip"
+            output_zip_path = os.path.join(output_zip_dir,
+                                           os.path.splitext(zip_file)[0]
+                                           + f" ({presets['image']['short_side']}x).zip")
+
+            original_zip_size = os.path.getsize(input_zip_path)
+
+            # 创建输出目录
+            os.makedirs(output_zip_dir, exist_ok=True)
+            os.makedirs(temp_dir, exist_ok=True)
+
+            # 解压ZIP文件到临时目录
+            extract_zip_files(input_zip_path, temp_dir)
+
+            # 压缩图片并创建新的ZIP文件
+            compress_images_in_zip(
+                input_zip_path, output_zip_path, temp_dir, max_workers=max_workers)
+
+            # 计算压缩后ZIP文件的大小
+            compressed_zip_size = os.path.getsize(output_zip_path)
+
+            # 计算压缩率
+            compression_rate = compressed_zip_size / \
+                original_zip_size * 100 if original_zip_size > 0 else 0
+
+            print(
+                f"  {Colors.OKCYAN}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+
+    else:
+        # process all images in the input directory and save them in the output directory
+        temp_dir = os.path.join(output_zip_dir, 'tmp')
+        folder_name = os.path.basename(input_dir)
+
+        print(f"{Colors.HEADER}{Colors.BOLD}Processing: /{folder_name}{Colors.ENDC}")
+
+        # the name of output zip is "foldername + (SHORT_SIDEx).zip"
         output_zip_path = os.path.join(output_zip_dir,
-                                       os.path.splitext(zip_file)[0]
+                                       folder_name
                                        + f" ({presets['image']['short_side']}x).zip")
+        original_folder_size = sum(
+            os.path.getsize(os.path.join(input_dir, f)) for f in os.listdir(input_dir))
 
-        original_zip_size = os.path.getsize(input_zip_path)
-
-        # 创建输出目录
+        # create output directory
         os.makedirs(output_zip_dir, exist_ok=True)
         os.makedirs(temp_dir, exist_ok=True)
 
-        # 压缩图片并创建新的ZIP文件
-        compress_images_in_zip(
-            input_zip_path, output_zip_path, temp_dir, max_workers=max_workers)
+        # compress images and create a new ZIP file
+        compress_images_in_folder(
+            input_dir, output_zip_path, temp_dir, max_workers=max_workers)
 
-        # 计算压缩后ZIP文件的大小
-        compressed_zip_size = os.path.getsize(output_zip_path)
+        # calculate the size of the compressed ZIP file
+        compressed_folder_size = os.path.getsize(output_zip_path)
 
-        # 计算压缩率
-        compression_rate = compressed_zip_size / \
-            original_zip_size * 100 if original_zip_size > 0 else 0
+        # calculate the compression rate
+        compression_rate = compressed_folder_size / \
+            original_folder_size * 100 if original_folder_size > 0 else 0
 
         print(
-            f"  {Colors.OKCYAN}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+            f"  {Colors.OKCYAN}Result: {original_folder_size/1024/1024:8.2f} MB -> {compressed_folder_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
 
     delete_temp_dir(temp_dir)
 
@@ -285,6 +385,8 @@ if __name__ == '__main__':
 
     parser.add_argument('-w', '--max-workers', type=int, default=8,
                         help='The maximum number of workers to use (default: 8).')
+    parser.add_argument('--folder-mode', type=bool, default=False,
+                        help='If False, process all zip files in the input directory. If True, compress all images in the input directory and save them in the output directory.')
 
     args = parser.parse_args()
 
@@ -304,4 +406,6 @@ if __name__ == '__main__':
     }
 
     process_zip_files(args.input_dir,
-                      args.output_dir, args.max_workers)
+                      args.output_dir,
+                      args.folder_mode,
+                      args.max_workers)
