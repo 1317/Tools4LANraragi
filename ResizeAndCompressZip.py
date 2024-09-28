@@ -1,4 +1,11 @@
 from PIL import Image
+
+# Image.MAX_IMAGE_PIXELS = None # Disable DecompressionBombError (only do that if you trust the source of the images)
+
+# from PIL import ImageFile
+# ImageFile.LOAD_TRUNCATED_IMAGES = True
+# use the two lines above if encounter "OSError: image file is truncated" error
+
 import os
 from datetime import datetime
 import zipfile
