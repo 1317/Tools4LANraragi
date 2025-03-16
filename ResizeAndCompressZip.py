@@ -19,6 +19,8 @@ img_exts = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif')
 video_exts = ('.mp4', '.mov')
 exts = img_exts + video_exts
 
+COMPRESS_RATE_WARN_THRESHOLD = 50
+
 # ANSI escape codes for colors and styles
 
 
@@ -319,9 +321,13 @@ def process_zip_files(input_dir, output_zip_dir, folder_mode=False, max_workers=
             # 计算压缩率
             compression_rate = compressed_zip_size / \
                 original_zip_size * 100 if original_zip_size > 0 else 0
-
-            print(
-                f"  {Colors.OKCYAN}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+            
+            if compression_rate <= COMPRESS_RATE_WARN_THRESHOLD:
+                print(
+                    f"  {Colors.OKCYAN}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+            else:
+                print(
+                    f"  {Colors.WARNING}Result: {original_zip_size/1024/1024:8.2f} MB -> {compressed_zip_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
 
     else:
         # process all images in the input directory and save them in the output directory
@@ -351,9 +357,13 @@ def process_zip_files(input_dir, output_zip_dir, folder_mode=False, max_workers=
         # calculate the compression rate
         compression_rate = compressed_folder_size / \
             original_folder_size * 100 if original_folder_size > 0 else 0
-
-        print(
-            f"  {Colors.OKCYAN}Result: {original_folder_size/1024/1024:8.2f} MB -> {compressed_folder_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+        
+        if compression_rate <= COMPRESS_RATE_WARN_THRESHOLD:
+            print(
+                f"  {Colors.OKCYAN}Result: {original_folder_size/1024/1024:8.2f} MB -> {compressed_folder_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
+        else:
+            print(
+                f"  {Colors.WARNING}Result: {original_folder_size/1024/1024:8.2f} MB -> {compressed_folder_size/1024/1024:8.2f} MB  ({compression_rate:.1f}%){Colors.ENDC}\n")
 
     delete_temp_dir(temp_dir)
 
